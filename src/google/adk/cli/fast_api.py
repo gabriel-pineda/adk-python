@@ -250,6 +250,8 @@ def get_fast_api_app(
       allow_headers=["*"],
   )
 
+  logger.info("Configured CORS")
+
   runner_dict = {}
 
   eval_sets_manager = LocalEvalSetsManager(agents_dir=agents_dir)
