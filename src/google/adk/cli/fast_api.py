@@ -242,14 +242,13 @@ def get_fast_api_app(
   # Run the FastAPI server.
   app = FastAPI(lifespan=internal_lifespan)
 
-  if allow_origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=allow_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+  app.add_middleware(
+      CORSMiddleware,
+      allow_origins=["*"],
+      allow_credentials=True,
+      allow_methods=["*"],
+      allow_headers=["*"],
+  )
 
   runner_dict = {}
 
