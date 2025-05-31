@@ -24,6 +24,9 @@ _DOCKERFILE_TEMPLATE = """
 FROM python:3.11-slim
 WORKDIR /app
 
+# Install git and clean up apt cache
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
 # Create a non-root user
 RUN adduser --disabled-password --gecos "" myuser
 
