@@ -43,7 +43,7 @@ ENV GOOGLE_CLOUD_LOCATION={gcp_region}
 # Set up environment variables - End
 
 # Install ADK - Start
-RUN pip install google-adk=={adk_version}
+RUN pip install git+https://github.com/gabriel-pineda/adk-python.git@main
 # Install ADK - End
 
 # Copy agent - Start
