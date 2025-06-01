@@ -858,29 +858,46 @@ def get_fast_api_app(
           default=["TEXT", "AUDIO"]
       ),  # Only allows "TEXT" or "AUDIO"
   ) -> None:
-    await websocket.accept()
+    # Add proper WebSocket headers for Cloud Run compatibility
+    try:
+      await websocket.accept()
+      logger.info("WebSocket connection accepted for session_id: %s", session_id)
+    except Exception as e:
+      logger.error("Failed to accept WebSocket connection: %s", e)
+      return
 
     # Connect to managed session if agent_engine_id is set.
     app_name = agent_engine_id if agent_engine_id else app_name
-    session = await session_service.get_session(
-        app_name=app_name, user_id=user_id, session_id=session_id
-    )
-    if not session:
-      # Accept first so that the client is aware of connection establishment,
-      # then close with a specific code.
-      await websocket.close(code=1002, reason="Session not found")
+    
+    try:
+      session = await session_service.get_session(
+          app_name=app_name, user_id=user_id, session_id=session_id
+      )
+      if not session:
+        # Accept first so that the client is aware of connection establishment,
+        # then close with a specific code.
+        logger.warning("Session not found for session_id: %s", session_id)
+        await websocket.close(code=1002, reason="Session not found")
+        return
+    except Exception as e:
+      logger.error("Error retrieving session: %s", e)
+      await websocket.close(code=1011, reason="Session retrieval failed")
       return
 
     live_request_queue = LiveRequestQueue()
 
     async def forward_events():
-      runner = await _get_runner_async(app_name)
-      async for event in runner.run_live(
-          session=session, live_request_queue=live_request_queue
-      ):
-        await websocket.send_text(
-            event.model_dump_json(exclude_none=True, by_alias=True)
-        )
+      try:
+        runner = await _get_runner_async(app_name)
+        async for event in runner.run_live(
+            session=session, live_request_queue=live_request_queue
+        ):
+          await websocket.send_text(
+              event.model_dump_json(exclude_none=True, by_alias=True)
+          )
+      except Exception as e:
+        logger.error("Error in forward_events: %s", e)
+        raise
 
     async def process_messages():
       try:
@@ -890,6 +907,10 @@ def get_fast_api_app(
           live_request_queue.send(LiveRequest.model_validate_json(data))
       except ValidationError as ve:
         logger.error("Validation error in process_messages: %s", ve)
+        raise
+      except Exception as e:
+        logger.error("Unexpected error in process_messages: %s", e)
+        raise
 
     # Run both tasks concurrently and cancel all if one fails.
     tasks = [
@@ -904,19 +925,24 @@ def get_fast_api_app(
       for task in done:
         task.result()
     except WebSocketDisconnect:
-      logger.info("Client disconnected during process_messages.")
+      logger.info("Client disconnected during process_messages for session: %s", session_id)
     except Exception as e:
       logger.exception("Error during live websocket communication: %s", e)
       traceback.print_exc()
       WEBSOCKET_INTERNAL_ERROR_CODE = 1011
       WEBSOCKET_MAX_BYTES_FOR_REASON = 123
-      await websocket.close(
-          code=WEBSOCKET_INTERNAL_ERROR_CODE,
-          reason=str(e)[:WEBSOCKET_MAX_BYTES_FOR_REASON],
-      )
+      try:
+        await websocket.close(
+            code=WEBSOCKET_INTERNAL_ERROR_CODE,
+            reason=str(e)[:WEBSOCKET_MAX_BYTES_FOR_REASON],
+        )
+      except Exception:
+        # Connection might already be closed
+        pass
     finally:
       for task in pending:
         task.cancel()
+      logger.info("WebSocket connection closed for session: %s", session_id)
 
   async def _get_runner_async(app_name: str) -> Runner:
     """Returns the runner for the given app."""
