@@ -641,8 +641,22 @@ def cli_api_server(
     type=str,
     default="",
     help=(
-        "Optional. App name of the ADK API server (default: the folder name"
-        " of the AGENT source code)."
+        "Optional. App name of the ADK API server (default: inferred from wheel filename)."
+    ),
+)
+@click.option(
+    "--agent_module",
+    type=str,
+    help=(
+        "Optional. Python module path for the agent (e.g., 'my_agent.agent'). "
+        "If not provided, will be inferred as '{app_name}.agent'."
+    ),
+)
+@click.option(
+    "--additional_requirements",
+    type=click.Path(exists=True, file_okay=True, dir_okay=False),
+    help=(
+        "Optional. Path to additional requirements.txt file for extra dependencies."
     ),
 )
 @click.option(
@@ -711,9 +725,9 @@ def cli_api_server(
     default=None,
 )
 @click.argument(
-    "agent",
+    "agent_wheel",
     type=click.Path(
-        exists=True, dir_okay=True, file_okay=False, resolve_path=True
+        exists=True, dir_okay=False, file_okay=True, resolve_path=True
     ),
 )
 @click.option(
@@ -727,11 +741,13 @@ def cli_api_server(
     ),
 )
 def cli_deploy_cloud_run(
-    agent: str,
+    agent_wheel: str,
     project: Optional[str],
     region: Optional[str],
     service_name: str,
     app_name: str,
+    agent_module: Optional[str],
+    additional_requirements: Optional[str],
     temp_folder: str,
     port: int,
     trace_to_cloud: bool,
@@ -741,21 +757,31 @@ def cli_deploy_cloud_run(
     artifact_storage_uri: Optional[str],
     adk_version: str,
 ):
-  """Deploys an agent to Cloud Run.
+  """Deploys an agent to Cloud Run from a wheel file.
 
-  AGENT: The path to the agent source code folder.
+  AGENT_WHEEL: The path to the agent wheel (.whl) file.
 
   Example:
 
-    adk deploy cloud_run --project=[project] --region=[region] path/to/my_agent
+    adk deploy cloud_run --project=[project] --region=[region] my_agent-1.0.0-py3-none-any.whl
+
+    adk deploy cloud_run --project=[project] --region=[region] --agent_module=my_agent.custom_agent my_agent-1.0.0-py3-none-any.whl
   """
+  # Infer app_name from wheel filename if not provided
+  if not app_name:
+    wheel_basename = os.path.basename(agent_wheel)
+    # Extract package name from wheel filename (before first hyphen)
+    app_name = wheel_basename.split('-')[0] if '-' in wheel_basename else wheel_basename.replace('.whl', '')
+
   try:
     cli_deploy.to_cloud_run(
-        agent_folder=agent,
+        agent_whl_file=agent_wheel,
         project=project,
         region=region,
         service_name=service_name,
         app_name=app_name,
+        agent_module=agent_module,
+        additional_requirements=additional_requirements,
         temp_folder=temp_folder,
         port=port,
         trace_to_cloud=trace_to_cloud,
