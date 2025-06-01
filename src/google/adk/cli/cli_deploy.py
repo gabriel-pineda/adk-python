@@ -49,16 +49,15 @@ ENV GOOGLE_CLOUD_LOCATION={gcp_region}
 RUN pip install git+https://github.com/gabriel-pineda/adk-python.git@main
 # Install ADK - End
 
-# Copy agent - Start
-
-COPY "agents/{app_name}/" "/app/agents/{app_name}/"
-{install_agent_deps}
-
-# Copy agent - End
+# Install agent from wheel - Start
+COPY "{agent_whl_filename}" "/app/{agent_whl_filename}"
+RUN pip install "/app/{agent_whl_filename}"
+{install_additional_deps}
+# Install agent from wheel - End
 
 EXPOSE {port}
 
-CMD adk {command} --port={port} {host_option} {session_db_option} {trace_to_cloud_option} "/app/agents"
+CMD adk {command} --port={port} {host_option} {session_db_option} {trace_to_cloud_option} --agent-module={agent_module}
 """
 
 _AGENT_ENGINE_APP_TEMPLATE = """
@@ -89,7 +88,7 @@ def _resolve_project(project_in_option: Optional[str]) -> str:
 
 def to_cloud_run(
     *,
-    agent_folder: str,
+    agent_whl_file: str,
     project: Optional[str],
     region: Optional[str],
     service_name: str,
@@ -102,28 +101,24 @@ def to_cloud_run(
     session_db_url: str,
     artifact_storage_uri: Optional[str],
     adk_version: str,
+    agent_module: Optional[str] = None,
+    additional_requirements: Optional[str] = None,
 ):
-  """Deploys an agent to Google Cloud Run.
+  """Deploys an agent to Google Cloud Run from a wheel file.
 
-  `agent_folder` should contain the following files:
-
-  - __init__.py
-  - agent.py
-  - requirements.txt (optional, for additional dependencies)
-  - ... (other required source files)
+  `agent_whl_file` should be a path to a wheel file containing the agent code.
 
   The folder structure of temp_folder will be
 
-  * dist/[google_adk wheel file]
-  * agents/[app_name]/
-    * agent source code from `agent_folder`
+  * [agent_whl_filename] (copied wheel file)
+  * requirements.txt (optional, for additional dependencies)
 
   Args:
-    agent_folder: The folder (absolute path) containing the agent source code.
+    agent_whl_file: The path (absolute or relative) to the agent wheel file.
     project: Google Cloud project id.
     region: Google Cloud region.
     service_name: The service name in Cloud Run.
-    app_name: The name of the app, by default, it's basename of `agent_folder`.
+    app_name: The name of the app.
     temp_folder: The temp folder for the generated Cloud Run source files.
     port: The port of the ADK api server.
     trace_to_cloud: Whether to enable Cloud Trace.
@@ -132,8 +127,20 @@ def to_cloud_run(
     session_db_url: The database URL to connect the session.
     artifact_storage_uri: The artifact storage URI to store the artifacts.
     adk_version: The ADK version to use in Cloud Run.
+    agent_module: The Python module path for the agent (e.g., 'my_agent.agent').
+    additional_requirements: Path to additional requirements.txt file for extra dependencies.
   """
-  app_name = app_name or os.path.basename(agent_folder)
+  if not os.path.exists(agent_whl_file):
+    raise click.ClickException(f"Agent wheel file not found: {agent_whl_file}")
+  
+  if not agent_whl_file.endswith('.whl'):
+    raise click.ClickException(f"Expected a .whl file, got: {agent_whl_file}")
+
+  agent_whl_filename = os.path.basename(agent_whl_file)
+  
+  # If agent_module is not provided, try to infer from app_name
+  if not agent_module:
+    agent_module = f"{app_name}.agent"
 
   click.echo(f'Start generating Cloud Run source files in {temp_folder}')
 
@@ -143,17 +150,23 @@ def to_cloud_run(
     shutil.rmtree(temp_folder)
 
   try:
-    # copy agent source code
-    click.echo('Copying agent source code...')
-    agent_src_path = os.path.join(temp_folder, 'agents', app_name)
-    shutil.copytree(agent_folder, agent_src_path)
-    requirements_txt_path = os.path.join(agent_src_path, 'requirements.txt')
-    install_agent_deps = (
-        f'RUN pip install -r "/app/agents/{app_name}/requirements.txt"'
-        if os.path.exists(requirements_txt_path)
-        else ''
-    )
-    click.echo('Copying agent source code complete.')
+    # Create temp folder
+    os.makedirs(temp_folder, exist_ok=True)
+    
+    # copy agent wheel file
+    click.echo('Copying agent wheel file...')
+    agent_whl_dest = os.path.join(temp_folder, agent_whl_filename)
+    shutil.copy2(agent_whl_file, agent_whl_dest)
+    click.echo('Copying agent wheel file complete.')
+
+    # Handle additional requirements if provided
+    install_additional_deps = ''
+    if additional_requirements and os.path.exists(additional_requirements):
+      click.echo('Copying additional requirements...')
+      requirements_dest = os.path.join(temp_folder, 'requirements.txt')
+      shutil.copy2(additional_requirements, requirements_dest)
+      install_additional_deps = 'COPY "requirements.txt" "/app/requirements.txt"\nRUN pip install -r "/app/requirements.txt"'
+      click.echo('Copying additional requirements complete.')
 
     # create Dockerfile
     click.echo('Creating Dockerfile...')
@@ -161,10 +174,10 @@ def to_cloud_run(
     dockerfile_content = _DOCKERFILE_TEMPLATE.format(
         gcp_project_id=project,
         gcp_region=region,
-        app_name=app_name,
+        agent_whl_filename=agent_whl_filename,
         port=port,
         command='web' if with_ui else 'api_server',
-        install_agent_deps=install_agent_deps,
+        install_additional_deps=install_additional_deps,
         session_db_option=f'--session_db_url={session_db_url}'
         if session_db_url
         else '',
@@ -174,9 +187,9 @@ def to_cloud_run(
         trace_to_cloud_option='--trace_to_cloud' if trace_to_cloud else '',
         adk_version=adk_version,
         host_option=host_option,
+        agent_module=agent_module,
     )
     dockerfile_path = os.path.join(temp_folder, 'Dockerfile')
-    os.makedirs(temp_folder, exist_ok=True)
     with open(dockerfile_path, 'w', encoding='utf-8') as f:
       f.write(
           dockerfile_content,
