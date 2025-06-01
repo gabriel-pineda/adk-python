@@ -730,6 +730,12 @@ def cli_api_server(
         exists=True, dir_okay=False, file_okay=True, resolve_path=True
     ),
 )
+@click.argument(
+    "agent_source_dir",
+    type=click.Path(
+        exists=True, dir_okay=True, file_okay=False, resolve_path=True
+    ),
+)
 @click.option(
     "--adk_version",
     type=str,
@@ -742,6 +748,7 @@ def cli_api_server(
 )
 def cli_deploy_cloud_run(
     agent_wheel: str,
+    agent_source_dir: str,
     project: Optional[str],
     region: Optional[str],
     service_name: str,
@@ -757,15 +764,17 @@ def cli_deploy_cloud_run(
     artifact_storage_uri: Optional[str],
     adk_version: str,
 ):
-  """Deploys an agent to Cloud Run from a wheel file.
+  """Deploys an agent to Cloud Run from a wheel file and source directory.
 
   AGENT_WHEEL: The path to the agent wheel (.whl) file.
+  
+  AGENT_SOURCE_DIR: The path to the agent source directory.
 
   Example:
 
-    adk deploy cloud_run --project=[project] --region=[region] my_agent-1.0.0-py3-none-any.whl
+    adk deploy cloud_run --project=[project] --region=[region] my_agent-1.0.0-py3-none-any.whl ./my_agent_src
 
-    adk deploy cloud_run --project=[project] --region=[region] --agent_module=my_agent.custom_agent my_agent-1.0.0-py3-none-any.whl
+    adk deploy cloud_run --project=[project] --region=[region] --agent_module=my_agent.custom_agent my_agent-1.0.0-py3-none-any.whl ./my_agent_src
   """
   # Infer app_name from wheel filename if not provided
   if not app_name:
@@ -776,6 +785,7 @@ def cli_deploy_cloud_run(
   try:
     cli_deploy.to_cloud_run(
         agent_whl_file=agent_wheel,
+        agent_source_dir=agent_source_dir,
         project=project,
         region=region,
         service_name=service_name,
