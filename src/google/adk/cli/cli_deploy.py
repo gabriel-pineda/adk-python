@@ -55,9 +55,19 @@ RUN pip install "/app/{agent_whl_filename}"
 {install_additional_deps}
 # Install agent from wheel - End
 
+# Create agent directory structure - Start
+RUN mkdir -p "/app/agents/{app_name}"
+
+# Create __init__.py that imports from the installed package
+RUN echo "# Import from installed wheel package" > "/app/agents/{app_name}/__init__.py"
+
+# Create agent.py that imports the root agent from the installed package
+RUN echo "from {agent_module} import root_agent" > "/app/agents/{app_name}/agent.py"
+# Create agent directory structure - End
+
 EXPOSE {port}
 
-CMD adk {command} --port={port} {host_option} {session_db_option} {trace_to_cloud_option} --agent-module={agent_module}
+CMD adk {command} --port={port} {host_option} {session_db_option} {trace_to_cloud_option} "/app/agents"
 """
 
 _AGENT_ENGINE_APP_TEMPLATE = """
@@ -175,6 +185,7 @@ def to_cloud_run(
         gcp_project_id=project,
         gcp_region=region,
         agent_whl_filename=agent_whl_filename,
+        app_name=app_name,
         port=port,
         command='web' if with_ui else 'api_server',
         install_additional_deps=install_additional_deps,
