@@ -651,6 +651,65 @@ def get_fast_api_app(
         app_name=app_name, user_id=user_id, session_id=session_id
     )
 
+  @app.put(
+      "/apps/{app_name}/users/{user_id}/sessions/{session_id}/state",
+      response_model_exclude_none=True,
+  )
+  async def update_session_state(
+      app_name: str,
+      user_id: str,
+      session_id: str,
+      new_state_values: dict[str, Any],
+  ) -> Session:
+    """Updates the state of an existing session."""
+    logger.info(
+        "Attempting to update state for app: %s, user: %s, session: %s",
+        app_name,
+        user_id,
+        session_id,
+    )
+    # Connect to managed session if agent_engine_id is set.
+    effective_app_name = agent_engine_id if agent_engine_id else app_name
+    session = await session_service.get_session(
+        app_name=effective_app_name, user_id=user_id, session_id=session_id
+    )
+    if not session:
+      logger.warning(
+          "Session not found for app: %s, user: %s, session: %s",
+          effective_app_name,
+          user_id,
+          session_id,
+      )
+      raise HTTPException(status_code=404, detail="Session not found")
+
+    logger.info(
+        "Session %s found. Current state (or empty if None): %s",
+        session_id,
+        session.state if session.state is not None else {},
+    )
+
+    if session.state is None:
+      session.state = {}
+    session.state.update(new_state_values)
+    logger.info(
+        "Session %s state updated with new values. New state: %s",
+        session_id,
+        session.state,
+    )
+
+    updated_session = await session_service.update_session(session)
+    if not updated_session:
+        logger.error(
+            "Failed to update session state for session_id: %s after attempting to save.",
+            session_id
+        )
+        # This case might happen if the underlying update mechanism can fail
+        # without raising an exception, or if it returns None on failure.
+        raise HTTPException(status_code=500, detail="Failed to update session state")
+    
+    logger.info("Session %s state successfully updated and saved.", session_id)
+    return updated_session
+
   @app.get(
       "/apps/{app_name}/users/{user_id}/sessions/{session_id}/artifacts/{artifact_name}",
       response_model_exclude_none=True,
