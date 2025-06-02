@@ -69,7 +69,7 @@ from ..evaluation.eval_result import EvalSetResult
 from ..evaluation.local_eval_set_results_manager import LocalEvalSetResultsManager
 from ..evaluation.local_eval_sets_manager import LocalEvalSetsManager
 from ..events.event import Event
-from ..events.event import EventAction
+from ..events import EventActions
 from ..memory.in_memory_memory_service import InMemoryMemoryService
 from ..runners import Runner
 from ..sessions.database_session_service import DatabaseSessionService
@@ -723,7 +723,7 @@ def get_fast_api_app(
           timestamp=time.time(),
           session_id=session_id,
           actions=[
-              EventAction(state_delta=copy.deepcopy(new_state_values))
+              EventActions(state_delta=copy.deepcopy(new_state_values))
           ],
           # Potentially add a simple content part indicating the source of the update
           parts=[types.Part(text=f"Session state updated externally via API for session {session_id}.")]
