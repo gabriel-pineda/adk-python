@@ -316,4 +316,5 @@ class InMemorySessionService(BaseSessionService):
     # No need to reassign it to self.sessions dictionary explicitly as we modified it in place.
     return event
 
-  async def get_app_state(
+  async def get_app_state(self, app_name: str) -> Optional[dict[str, Any]]:
+    pass
