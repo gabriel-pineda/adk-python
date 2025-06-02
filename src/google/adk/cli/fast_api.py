@@ -664,9 +664,9 @@ def get_fast_api_app(
       session_id: str,
       new_state_values: dict[str, Any],
   ) -> Session:
-    """Updates the state of an existing session and records an event."""
+    """Updates the state of an existing session by appending an event with state_delta."""
     logger.info(
-        "Attempting to update state for app: %s, user: %s, session: %s with values: %s",
+        "Attempting to update state for app: %s, user: %s, session: %s with values: %s via append_event.",
         app_name,
         user_id,
         session_id,
@@ -674,10 +674,12 @@ def get_fast_api_app(
     )
     # Connect to managed session if agent_engine_id is set.
     effective_app_name = agent_engine_id if agent_engine_id else app_name
-    session = await session_service.get_session(
+
+    # 1. Get the current session to ensure it exists and to pass to append_event.
+    current_session = await session_service.get_session(
         app_name=effective_app_name, user_id=user_id, session_id=session_id
     )
-    if not session:
+    if not current_session:
       logger.warning(
           "Session not found for app: %s, user: %s, session: %s. Cannot update state.",
           effective_app_name,
@@ -687,64 +689,61 @@ def get_fast_api_app(
       raise HTTPException(status_code=404, detail="Session not found")
 
     logger.info(
-        "Session %s found. Current state (or empty if None): %s",
+        "Session %s found. Current state before append_event: %s",
         session_id,
-        session.state if session.state is not None else {},
+        current_session.state if current_session.state is not None else {},
     )
 
-    # Apply the new state values
-    if session.state is None:
-      session.state = {}
-    session.state.update(new_state_values)
-    session.last_update_time = time.time() # Update timestamp before saving
-
-    logger.info(
-        "Session %s state updated with new values. Preparing to save. New state: %s",
-        session_id,
-        session.state,
+    # 2. Create an event with the desired state changes in state_delta.
+    #    DO NOT modify current_session.state directly here.
+    #    DO NOT call session_service.update_session() anymore.
+    event_id = str(uuid.uuid4())
+    system_event = Event(
+        id=event_id,
+        author="EXTERNAL_API_STATE_UPDATE", # System identifier for this type of update
+        timestamp=time.time(),
+        actions=EventActions(state_delta=copy.deepcopy(new_state_values)),
+        content=types.Content(parts=[types.Part(text=f"Session state updated externally via API for session {session_id}.")])
     )
-
-    updated_session = await session_service.update_session(session)
-    if not updated_session:
-        logger.error(
-            "Failed to update session state for session_id: %s after attempting to save with session_service.update_session.",
-            session_id
-        )
-        raise HTTPException(status_code=500, detail="Failed to update session state directly")
     
-    logger.info("Session %s state successfully updated directly via update_session.", session_id)
-
-    # Now, create and append an event to record this state change
+    # 3. Append the event. The SessionService (e.g., InMemorySessionService)
+    #    is responsible for applying the state_delta from the event to the session's state.
     try:
-      event_id = str(uuid.uuid4())
-      system_event = Event(
-          id=event_id,
-          author="EXTERNAL_STATE_UPDATE", # Or any other system identifier
-          timestamp=time.time(),
-          # session_id is not a direct field of Event constructor
-          actions=EventActions(state_delta=copy.deepcopy(new_state_values)), # Corrected: not a list
-          # Potentially add a simple content part indicating the source of the update
-          content=types.Content(parts=[types.Part(text=f"Session state updated externally via API for session {session_id}.")]) # Corrected: use content field
+      await session_service.append_event(session=current_session, event=system_event)
+      logger.info(
+          "Successfully triggered append_event for system event %s (state update) to session %s.",
+          event_id,
+          session_id
       )
-      
-      # Pass the `updated_session` object to append_event, as it might be modified by it (e.g. event added to its list)
-      # and also used to identify the session in the session service.
-      await session_service.append_event(session=updated_session, event=system_event)
-      logger.info("Successfully appended system event %s for external state update to session %s.", event_id, session_id)
     except Exception as e:
       logger.error(
           "Failed to append system event for external state update to session %s. Error: %s",
           session_id,
           e,
-          exc_info=True # Include traceback in logs for this error
+          exc_info=True
       )
-      # Decide if this failure is critical enough to roll back or return an error.
-      # For now, we'll log it and proceed, as the primary state update was successful.
+      # If append_event fails, the state was not updated. This is a server error.
+      raise HTTPException(status_code=500, detail=f"Failed to append event for state update: {e}")
 
-    # The `updated_session` from `update_session` is the most current version of the session object.
-    # If `append_event` modifies the session object it receives (e.g. by adding the event to session.events),
-    # that modification would be on the `updated_session` instance.
-    return updated_session
+    # 4. Get the session again to retrieve the state as modified by append_event.
+    #    This ensures the returned session accurately reflects the persisted changes.
+    session_after_update = await session_service.get_session(
+        app_name=effective_app_name, user_id=user_id, session_id=session_id
+    )
+
+    if not session_after_update:
+        # This would be highly unusual if append_event succeeded and didn't delete the session.
+        logger.error(
+            "Session %s disappeared after append_event. This should not happen.", session_id
+        )
+        raise HTTPException(status_code=500, detail="Session not found after state update attempt.")
+
+    logger.info(
+        "Session %s state successfully updated via append_event. Final state: %s",
+        session_id,
+        session_after_update.state
+    )
+    return session_after_update
 
   @app.get(
       "/apps/{app_name}/users/{user_id}/sessions/{session_id}/artifacts/{artifact_name}",
