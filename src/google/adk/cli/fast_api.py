@@ -26,6 +26,8 @@ from typing import Any
 from typing import List
 from typing import Literal
 from typing import Optional
+import uuid
+import copy
 
 import click
 from fastapi import FastAPI
@@ -67,6 +69,7 @@ from ..evaluation.eval_result import EvalSetResult
 from ..evaluation.local_eval_set_results_manager import LocalEvalSetResultsManager
 from ..evaluation.local_eval_sets_manager import LocalEvalSetsManager
 from ..events.event import Event
+from ..events.event import EventAction
 from ..memory.in_memory_memory_service import InMemoryMemoryService
 from ..runners import Runner
 from ..sessions.database_session_service import DatabaseSessionService
@@ -661,12 +664,13 @@ def get_fast_api_app(
       session_id: str,
       new_state_values: dict[str, Any],
   ) -> Session:
-    """Updates the state of an existing session."""
+    """Updates the state of an existing session and records an event."""
     logger.info(
-        "Attempting to update state for app: %s, user: %s, session: %s",
+        "Attempting to update state for app: %s, user: %s, session: %s with values: %s",
         app_name,
         user_id,
         session_id,
+        new_state_values
     )
     # Connect to managed session if agent_engine_id is set.
     effective_app_name = agent_engine_id if agent_engine_id else app_name
@@ -675,7 +679,7 @@ def get_fast_api_app(
     )
     if not session:
       logger.warning(
-          "Session not found for app: %s, user: %s, session: %s",
+          "Session not found for app: %s, user: %s, session: %s. Cannot update state.",
           effective_app_name,
           user_id,
           session_id,
@@ -688,11 +692,14 @@ def get_fast_api_app(
         session.state if session.state is not None else {},
     )
 
+    # Apply the new state values
     if session.state is None:
       session.state = {}
     session.state.update(new_state_values)
+    session.last_update_time = time.time() # Update timestamp before saving
+
     logger.info(
-        "Session %s state updated with new values. New state: %s",
+        "Session %s state updated with new values. Preparing to save. New state: %s",
         session_id,
         session.state,
     )
@@ -700,14 +707,45 @@ def get_fast_api_app(
     updated_session = await session_service.update_session(session)
     if not updated_session:
         logger.error(
-            "Failed to update session state for session_id: %s after attempting to save.",
+            "Failed to update session state for session_id: %s after attempting to save with session_service.update_session.",
             session_id
         )
-        # This case might happen if the underlying update mechanism can fail
-        # without raising an exception, or if it returns None on failure.
-        raise HTTPException(status_code=500, detail="Failed to update session state")
+        raise HTTPException(status_code=500, detail="Failed to update session state directly")
     
-    logger.info("Session %s state successfully updated and saved.", session_id)
+    logger.info("Session %s state successfully updated directly via update_session.", session_id)
+
+    # Now, create and append an event to record this state change
+    try:
+      event_id = str(uuid.uuid4())
+      system_event = Event(
+          id=event_id,
+          author="EXTERNAL_STATE_UPDATE", # Or any other system identifier
+          timestamp=time.time(),
+          session_id=session_id,
+          actions=[
+              EventAction(state_delta=copy.deepcopy(new_state_values))
+          ],
+          # Potentially add a simple content part indicating the source of the update
+          parts=[types.Part(text=f"Session state updated externally via API for session {session_id}.")]
+      )
+      
+      # Pass the `updated_session` object to append_event, as it might be modified by it (e.g. event added to its list)
+      # and also used to identify the session in the session service.
+      await session_service.append_event(session=updated_session, event=system_event)
+      logger.info("Successfully appended system event %s for external state update to session %s.", event_id, session_id)
+    except Exception as e:
+      logger.error(
+          "Failed to append system event for external state update to session %s. Error: %s",
+          session_id,
+          e,
+          exc_info=True # Include traceback in logs for this error
+      )
+      # Decide if this failure is critical enough to roll back or return an error.
+      # For now, we'll log it and proceed, as the primary state update was successful.
+
+    # The `updated_session` from `update_session` is the most current version of the session object.
+    # If `append_event` modifies the session object it receives (e.g. by adding the event to session.events),
+    # that modification would be on the `updated_session` instance.
     return updated_session
 
   @app.get(
