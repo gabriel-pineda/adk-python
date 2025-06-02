@@ -254,6 +254,38 @@ class InMemorySessionService(BaseSessionService):
     self.sessions[app_name][user_id].pop(session_id)
 
   @override
+  async def update_session(self, session_to_update: Session) -> Optional[Session]:
+    """Updates an existing session in the in-memory store."""
+    app_name = session_to_update.app_name
+    user_id = session_to_update.user_id
+    session_id = session_to_update.id
+
+    if (
+        app_name not in self.sessions
+        or user_id not in self.sessions[app_name]
+        or session_id not in self.sessions[app_name][user_id]
+    ):
+      logger.warning(
+          "Attempted to update a non-existent session. App: %s, User: %s, SessionID: %s",
+          app_name,
+          user_id,
+          session_id,
+      )
+      return None
+
+    # Update the last_update_time
+    session_to_update.last_update_time = time.time()
+
+    # Store a deep copy of the updated session
+    self.sessions[app_name][user_id][session_id] = copy.deepcopy(session_to_update)
+
+    # Return a deep copy of the stored session, consistent with get_session
+    # and create_session. Note: _merge_state is not called here as it's for
+    # enriching a retrieved session with app/user-wide state, not for altering
+    # the core state being persisted during an update.
+    return copy.deepcopy(self.sessions[app_name][user_id][session_id])
+
+  @override
   async def append_event(self, session: Session, event: Event) -> Event:
     # Update the in-memory session.
     await super().append_event(session=session, event=event)
