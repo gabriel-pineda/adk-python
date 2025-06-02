@@ -721,12 +721,10 @@ def get_fast_api_app(
           id=event_id,
           author="EXTERNAL_STATE_UPDATE", # Or any other system identifier
           timestamp=time.time(),
-          session_id=session_id,
-          actions=[
-              EventActions(state_delta=copy.deepcopy(new_state_values))
-          ],
+          # session_id is not a direct field of Event constructor
+          actions=EventActions(state_delta=copy.deepcopy(new_state_values)), # Corrected: not a list
           # Potentially add a simple content part indicating the source of the update
-          parts=[types.Part(text=f"Session state updated externally via API for session {session_id}.")]
+          content=types.Content(parts=[types.Part(text=f"Session state updated externally via API for session {session_id}.")]) # Corrected: use content field
       )
       
       # Pass the `updated_session` object to append_event, as it might be modified by it (e.g. event added to its list)
