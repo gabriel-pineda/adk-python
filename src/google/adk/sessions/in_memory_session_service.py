@@ -255,14 +255,9 @@ class InMemorySessionService(BaseSessionService):
 
   @override
   async def append_event(self, session: Session, event: Event) -> Event:
-    # Get the actual session from storage to ensure we're modifying the correct one.
-    # The passed 'session' might be a copy or an incomplete representation.
-    storage_session = self._get_session_impl(
-        app_name=session.app_name,
-        user_id=session.user_id,
-        session_id=session.id,
-        config=None, # Get the full session for update
-    )
+    # Update the in-memory session.
+    await super().append_event(session=session, event=event)
+    session.last_update_time = event.timestamp
 
     # Update the storage session
     app_name = session.app_name
@@ -284,33 +279,45 @@ class InMemorySessionService(BaseSessionService):
       _warning(f'session_id {session_id} not in sessions[app_name][user_id]')
       return event
 
-    # Delegate to BaseSessionService.append_event for common logic like adding to events list.
-    # This will add the event to storage_session.events.
-    await super().append_event(session=storage_session, event=event)
-    storage_session.last_update_time = event.timestamp
-
-    # Process state_delta for APP_PREFIX, USER_PREFIX, and session-specific state
     if event.actions and event.actions.state_delta:
-      for key, value in event.actions.state_delta.items():
+      for key in event.actions.state_delta:
         if key.startswith(State.APP_PREFIX):
-          self.app_state.setdefault(storage_session.app_name, {})[
+          self.app_state.setdefault(app_name, {})[
               key.removeprefix(State.APP_PREFIX)
-          ] = value
-        elif key.startswith(State.USER_PREFIX):
-          self.user_state.setdefault(storage_session.app_name, {}).setdefault(
-              storage_session.user_id, {}
-          )[key.removeprefix(State.USER_PREFIX)] = value
-        elif key.startswith(State.TEMP_PREFIX):
-          # temp: prefixed state is explicitly not persisted by InMemorySessionService
-          # It's meant to be discarded after the current turn. The base append_event
-          # might add it to the session object for the current turn, but it won't be
-          # in self.sessions for the next get_session call.
-          pass # No action needed for temp state here for persistence.
-        else:
-          # Session-specific state (no prefix)
-          if storage_session.state is None: # Should not happen if session properly initialized
-            storage_session.state = {}
-          storage_session.state[key] = value
+          ] = event.actions.state_delta[key]
+
+        if key.startswith(State.USER_PREFIX):
+          self.user_state.setdefault(app_name, {}).setdefault(user_id, {})[
+              key.removeprefix(State.USER_PREFIX)
+          ] = event.actions.state_delta[key]
+
+    storage_session = self.sessions[app_name][user_id].get(session_id)
+    if storage_session:
+      await super().append_event(session=storage_session, event=event)
+      storage_session.last_update_time = event.timestamp
+    # COMMENTED OUT FOR NOW 
+    # Process state_delta for APP_PREFIX, USER_PREFIX, and session-specific state
+    # if event.actions and event.actions.state_delta:
+    #   for key, value in event.actions.state_delta.items():
+    #     if key.startswith(State.APP_PREFIX):
+    #       self.app_state.setdefault(storage_session.app_name, {})[
+    #           key.removeprefix(State.APP_PREFIX)
+    #       ] = value
+    #     elif key.startswith(State.USER_PREFIX):
+    #       self.user_state.setdefault(storage_session.app_name, {}).setdefault(
+    #           storage_session.user_id, {}
+    #       )[key.removeprefix(State.USER_PREFIX)] = value
+    #     elif key.startswith(State.TEMP_PREFIX):
+    #       # temp: prefixed state is explicitly not persisted by InMemorySessionService
+    #       # It's meant to be discarded after the current turn. The base append_event
+    #       # might add it to the session object for the current turn, but it won't be
+    #       # in self.sessions for the next get_session call.
+    #       pass # No action needed for temp state here for persistence.
+    #     else:
+    #       # Session-specific state (no prefix)
+    #       if storage_session.state is None: # Should not happen if session properly initialized
+    #         storage_session.state = {}
+    #       storage_session.state[key] = value
 
     # The storage_session in self.sessions[app_name][user_id][session_id] is now updated.
     # No need to reassign it to self.sessions dictionary explicitly as we modified it in place.
