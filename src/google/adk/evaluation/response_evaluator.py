@@ -15,7 +15,7 @@
 from typing import Any
 from typing import Optional
 
-from deprecated import deprecated
+# from deprecated import deprecated
 from google.genai import types as genai_types
 import pandas as pd
 from tabulate import tabulate
@@ -123,12 +123,12 @@ class ResponseEvaluator(Evaluator):
     return EvalStatus.PASSED if score >= self._threshold else EvalStatus.FAILED
 
   @staticmethod
-  @deprecated(
-      reason=(
-          "This method has been deprecated and will be removed soon. Please use"
-          " evaluate_invocations instead."
-      )
-  )
+  # @deprecated(
+  #     reason=(
+  #         "This method has been deprecated and will be removed soon. Please use"
+  #         " evaluate_invocations instead."
+  #     )
+  # )
   def evaluate(
       raw_eval_dataset: list[list[dict[str, Any]]],
       evaluation_criteria: list[str],

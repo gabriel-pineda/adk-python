@@ -15,7 +15,7 @@
 from typing import Any
 from typing import cast
 
-from deprecated import deprecated
+# from deprecated import deprecated
 from google.genai import types as genai_types
 import pandas as pd
 from tabulate import tabulate
@@ -99,12 +99,12 @@ class TrajectoryEvaluator(Evaluator):
     return EvalStatus.PASSED if score >= self._threshold else EvalStatus.FAILED
 
   @staticmethod
-  @deprecated(
-      reason=(
-          "This method has been deprecated and will be removed soon. Please use"
-          " evaluate_invocations instead."
-      )
-  )
+  # @deprecated(
+  #     reason=(
+  #         "This method has been deprecated and will be removed soon. Please use"
+  #         " evaluate_invocations instead."
+  #     )
+  # )
   def evaluate(
       eval_dataset: list[list[dict[str, Any]]],
       *,
@@ -218,7 +218,7 @@ class TrajectoryEvaluator(Evaluator):
     return new_row, failure
 
   @staticmethod
-  @deprecated()
+  # @deprecated()
   def are_tools_equal(list_a_original, list_b_original):
     # Remove other entries that we don't want to evaluate
     list_a = [
